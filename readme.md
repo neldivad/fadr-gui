@@ -18,7 +18,7 @@ fadr-proj/
 ```
 
 ## Usage
-1. Get API key from https://api.fadr.com. You need to subscribe to the Fadr API at least $10/mth.
+1. Get API key from https://api.fadr.com. You need to subscribe to the Fadr API at least $10/mth https://fadr.com/account/api.
 2. Create a `.env` file in the root directory with the following content:
 ```
 # .env
