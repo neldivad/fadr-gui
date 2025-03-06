@@ -1,12 +1,3 @@
-1. Place your audio files in the `root/input/` folder
-
-2. Run
-```bash
-node src/index.js
-```
-
-3. Files will be saved to `root/output/`
-
 
 ## Project Structure
 ```
@@ -27,7 +18,7 @@ fadr-proj/
 ```
 
 ## Usage
-1. Get API key from https://api.fadr.com. You need to subscribe to the Fadr API.
+1. Get API key from https://api.fadr.com. You need to subscribe to the Fadr API at least $10/mth.
 2. Create a `.env` file in the root directory with the following content:
 ```
 # .env
