@@ -1,0 +1,106 @@
+<!-- static/index.html -->
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <title>Fadr Stem Processor</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+  <div class="tab-container">
+    <div class="tabs">
+      <button class="tab-button active" data-tab="process-tab">Process New File</button>
+      <button class="tab-button" data-tab="recover-tab">Recover Files</button>
+    </div>
+    
+    <!-- process file -->
+    <div class="tab-content active" id="process-tab" data-tab-content>
+      <div class="container">
+        <h2>Fadr Stem Processor</h2>
+        
+        <div class="file-selection">
+          <div class="form-group">
+            <label for="inputFile">Select MP3 File:</label>
+            <div class="file-input-group">
+              <input type="text" id="inputFile" readonly>
+              <button id="browseButton">Browse</button>
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label for="outputDir">Output Directory:</label>
+            <div class="file-input-group">
+              <input type="text" id="outputDir" readonly>
+              <button id="selectOutputButton">Select</button>
+            </div>
+          </div>
+          
+          <button id="processButton" disabled>Process File</button>
+        </div>
+        
+        <div class="status-container" id="statusContainer">
+          <h2>Processing Status</h2>
+          <div class="status-log" id="statusLog"></div>
+          <div class="progress-container">
+            <div class="progress-bar" id="progressBar"></div>
+          </div>
+          <div class="percentage" id="percentage">0%</div>
+        </div>
+        
+        <div class="results-container" id="resultsContainer">
+          <h2>Results</h2>
+          <div class="metadata-container">
+            <h3>Metadata</h3>
+            <pre id="metadataContent"></pre>
+          </div>
+          <div class="stems-container">
+            <h3>Generated Stems</h3>
+            <ul id="stemsList"></ul>
+          </div>
+          <div class="midi-container">
+            <h3>Generated MIDI</h3>
+            <ul id="midiList"></ul>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- recover files -->
+    <div class="tab-content" id="recover-tab" data-tab-content>
+      <div class="container">
+        <h2>Recover Files from Asset ID</h2>
+        <div class="form-group">
+          <label for="assetId">Asset ID:</label>
+          <input type="text" id="assetId" placeholder="Enter the asset ID">
+        </div>
+        
+        <div class="form-group">
+          <label for="recoverOutputDir">Output Directory:</label>
+          <div class="file-input-group">
+            <input type="text" id="recoverOutputDir" readonly>
+            <button id="recoverSelectOutputButton">Select</button>
+          </div>
+        </div>
+      
+        <button id="recoverButton" disabled>Recover Files</button>
+        
+        <div class="status-container" id="recoverStatusContainer" style="display: none;">
+          <h2>Recovery Status</h2>
+          <div class="status-log" id="recoverStatusLog"></div>
+          <div class="progress-container">
+            <div class="progress-bar" id="recoverProgressBar"></div>
+          </div>
+          <div class="percentage" id="recoverPercentage">0%</div>
+        </div>
+        
+      </div>
+    </div>
+  </div>
+
+  <script src="../src/processHandler.js"></script>
+  <script src="../src/recoverHandler.js"></script>
+  <script src="../src/renderer.js"></script>
+</body>
+</html>
