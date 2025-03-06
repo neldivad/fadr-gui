@@ -19,7 +19,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // Events
   onProcessProgress: (callback) => {
-    ipcRenderer.on('process-progress', (event, data) => callback(event, data));
+    ipcRenderer.on('process-progress', (event, data) => callback(data));
   },
   onRecoverProgress: (callback) => {
     ipcRenderer.on("recover-progress", (event, data) => callback(data));
@@ -32,10 +32,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Recovery method
   recoverFromAssetId: (assetId, outputDir) => 
     ipcRenderer.invoke('recover-from-asset-id', assetId, outputDir),
-  
-  // Progress event for recovery
-  onRecoverProgress: (callback) => {
-    ipcRenderer.on('recover-progress', (event, data) => callback(event, data));
-  }
   
 });

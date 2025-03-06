@@ -156,7 +156,7 @@ class FadrApi {
   }
 
   // Poll for task completion with timeout
-  async pollTaskStatus(taskId, onProgress, maxAttempts = 60) {
+  async pollTaskStatus(taskId, onProcessProgress, maxAttempts = 60) {
     try {
       let attempts = 0;
       
@@ -189,8 +189,8 @@ class FadrApi {
         }
         
         // Call progress callback
-        if (onProgress) {
-          onProgress(attempts, maxAttempts);
+        if (onProcessProgress) {
+          onProcessProgress(attempts, maxAttempts);
         }
         
         // Wait 5 seconds before next check
@@ -262,7 +262,8 @@ class FadrApi {
       // Get file details
       const fileName = path.basename(inputPath);
       const fileExt = path.extname(inputPath).substring(1);
-      const nameWithPrefix = `[Processed] - ${path.parse(fileName).name}`;
+      const baseName = path.parse(fileName).name;
+      const nameWithPrefix = `[Processed] - ${baseName}`;
       const stemOutputDir = path.join(outputDir, nameWithPrefix);
       
       // Create output directory
@@ -322,7 +323,7 @@ class FadrApi {
         const downloadUrl = await this.getDownloadUrl(stemAsset._id);
         
         // Download the stem
-        const outputPath = path.join(stemOutputDir, `${stemType}.${fileExt}`);
+        const outputPath = path.join(stemOutputDir, `${baseName}_${stemType}.${fileExt}`);
         await this.downloadFile(downloadUrl, outputPath);
         
         stemResults.push({
@@ -451,7 +452,7 @@ class FadrApi {
       const downloadUrl = await this.getDownloadUrl(stemAsset._id);
       
       // Download the stem
-      const outputPath = path.join(drumStemsDir, `${stemType}.${fileExt}`);
+      const outputPath = path.join(drumStemsDir, `${drumsAssetId}_${stemType}.${fileExt}`);
       await this.downloadFile(downloadUrl, outputPath);
       
       drumResults.push({
@@ -514,6 +515,11 @@ class FadrApi {
         
         // Get file extension from asset (default to mp3 if not found)
         const fileExt = 'mp3';
+
+        // Ensure metadata and name exist
+        const baseName = asset.metaData?.name 
+        ? path.parse(asset.metaData.name).name 
+        : `${assetId}`;
         
         // Process each stem
         let stemCount = 0;
@@ -531,7 +537,7 @@ class FadrApi {
             const downloadUrl = await this.getDownloadUrl(stemId);
             
             // Download the stem
-            const outputPath = path.join(outputDir, `${stemType}.${fileExt}`);
+            const outputPath = path.join(outputDir, `${baseName}_${stemType}.${fileExt}`);
             await this.downloadFile(downloadUrl, outputPath);
             
             results.stems.push({
