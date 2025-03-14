@@ -7,6 +7,7 @@ const { setTimeout } = require('timers/promises');
 class FadrApi {
   constructor(apiKey, apiUrl = 'https://api.fadr.com') {
     this.apiUrl = apiUrl;
+    this.apiKey = apiKey;
     this.client = axios.create({
       headers: {
         Authorization: `Bearer ${apiKey}`
@@ -15,20 +16,17 @@ class FadrApi {
     });
   }
 
-  // Validate input file exists and is a supported format
+  // File and Directory Utility Methods
   validateInputFile(filePath) {
-    // Check if file exists
     if (!fs.existsSync(filePath)) {
       throw new Error(`Input file does not exist: ${filePath}`);
     }
 
-    // Check file extension
     const ext = path.extname(filePath).toLowerCase();
     if (!['.mp3', '.wav'].includes(ext)) {
       throw new Error(`Unsupported file format: ${ext}. Only .mp3 and .wav files are supported.`);
     }
 
-    // Check file size
     const stats = fs.statSync(filePath);
     const sizeMB = stats.size / (1024 * 1024);
     if (sizeMB > 100) {
@@ -38,35 +36,37 @@ class FadrApi {
     return true;
   }
 
-  // Validate output directory exists or can be created
-  validateOutputDirectory(dirPath) {
+  ensureDirectory(dirPath) {
     try {
       if (!fs.existsSync(dirPath)) {
         fs.mkdirSync(dirPath, { recursive: true });
       }
-      
-      // Test write permissions by creating a temporary file
+      return true;
+    } catch (error) {
+      throw new Error(`Cannot create directory: ${error.message}`);
+    }
+  }
+
+  validateOutputDirectory(dirPath) {
+    this.ensureDirectory(dirPath);
+    
+    try {
+      // Test write permissions
       const testFile = path.join(dirPath, '.test-write-access');
       fs.writeFileSync(testFile, 'test');
       fs.unlinkSync(testFile);
-      
       return true;
     } catch (error) {
       throw new Error(`Cannot write to output directory: ${error.message}`);
     }
   }
 
-  // Save metadata to a JSON file
+  // Save metadata to file
   async saveMetadataToFile(metadata, outputDir, fileName = 'metadata.json') {
     try {
       const filePath = path.join(outputDir, fileName);
-      
-      // Format the JSON with indentation for readability
       const jsonContent = JSON.stringify(metadata, null, 2);
-      
-      // Write to file
       fs.writeFileSync(filePath, jsonContent);
-      
       return filePath;
     } catch (error) {
       console.error(`Error saving metadata: ${error.message}`);
@@ -74,32 +74,39 @@ class FadrApi {
     }
   }
 
+  // API Request Methods
+  _handleApiError(error, defaultMessage) {
+    if (error.response) {
+      const data = error.response.data;
+      const message = data.message || data.error || JSON.stringify(data);
+      throw new Error(`${defaultMessage}: ${message} (Status ${error.response.status})`);
+    } else if (error.request) {
+      throw new Error(`${defaultMessage}: No response received`);
+    } else {
+      throw new Error(`${defaultMessage}: ${error.message}`);
+    }
+  }
 
-  // Get upload URL for file
   async getUploadUrl(fileName, extension) {
     try {
       const response = await this.client.post(`${this.apiUrl}/assets/upload2`, {
         name: fileName,
         extension: extension,
       });
-      
       return response.data;
     } catch (error) {
       this._handleApiError(error, 'Failed to get upload URL');
     }
   }
 
-  // Upload file to provided URL
   async uploadFile(url, filePath, fileType) {
     try {
       const fileContent = fs.readFileSync(filePath);
       
-      // Use a separate axios instance without auth headers
       const uploadClient = axios.create({
         headers: {
           'Content-Type': fileType
         },
-        // Longer timeout for uploads
         timeout: 120000 // 2 minutes
       });
       
@@ -112,7 +119,6 @@ class FadrApi {
     }
   }
 
-  // Create asset in Fadr
   async createAsset(name, extension, s3Path, group) {
     try {
       const response = await this.client.post(`${this.apiUrl}/assets`, {
@@ -121,92 +127,108 @@ class FadrApi {
         group: group || `${name}-group`,
         s3Path
       });
-      
       return response.data.asset;
     } catch (error) {
       this._handleApiError(error, 'Failed to create asset');
     }
   }
 
-  // Create stem task
   async createStemTask(assetId) {
     try {
       const response = await this.client.post(`${this.apiUrl}/assets/analyze/stem`, {
         _id: assetId
       });
-      
       return response.data.task;
     } catch (error) {
       this._handleApiError(error, 'Failed to create stem task');
     }
   }
 
-  // Create drum stem task
-  async createDrumStemTask(assetId) {
+  async createDrumStemTask(drumAssetId) {
     try {
       const response = await this.client.post(`${this.apiUrl}/assets/analyze/stem`, {
-        _id: assetId,
+        _id: drumAssetId,
         stemType: "drum-stem"
       });
-      
       return response.data.task;
     } catch (error) {
       this._handleApiError(error, 'Failed to create drum stem task');
     }
   }
 
-  // Poll for task completion with timeout
-  async pollTaskStatus(taskId, onProcessProgress, maxAttempts = 60) {
+  async createOtherStemTask(otherAssetId) {
     try {
-      let attempts = 0;
+      const response = await this.client.post(`${this.apiUrl}/assets/analyze/stem`, {
+        _id: otherAssetId,
+        stemType: "other-stem" // or "melody-stem"
+      });
+      return response.data.task;
+    } catch (error) {
+      this._handleApiError(error, 'Failed to create other stem task');
+    }
+  }
+
+  // async createTask(assetId, taskType = "stem", stemType = null) {
+  //   try {
+  //     const payload = { _id: assetId };
+  //     if (stemType) {
+  //       payload.stemType = stemType;
+  //     }
       
-      while (attempts < maxAttempts) {
-        attempts++;
-        
+  //     const response = await this.client.post(
+  //       `${this.apiUrl}/assets/analyze/${taskType}`, 
+  //       payload
+  //     );
+      
+  //     return response.data.task;
+  //   } catch (error) {
+  //     this._handleApiError(error, `Failed to create ${taskType} task`);
+  //   }
+  // }
+
+  async pollTaskStatus(taskId, onProcessProgress, maxAttempts = 60) {
+    let attempts = 0;
+    
+    while (attempts < maxAttempts) {
+      attempts++;
+      
+      try {
         const response = await this.client.post(`${this.apiUrl}/tasks/query`, {
           _ids: [taskId]
         });
-        
         if (!response.data.tasks || response.data.tasks.length === 0) {
           throw new Error('Task not found');
         }
         
         const task = response.data.tasks[0];
-        
-        // Check if task has failed
         if (task.status === 'error' || task.status === 'failed') {
           throw new Error(`Task failed with status: ${task.status}`);
         }
         
-        // Check if stems are ready
         if (task.asset.stems?.length) {
           return task;
         }
         
-        // If just waiting for MIDI, and it's now available
         if (task.asset.midi?.length && attempts > 12) {
           return task;
         }
         
-        // Call progress callback
         if (onProcessProgress) {
           onProcessProgress(attempts, maxAttempts);
         }
-        
-        // Wait 5 seconds before next check
-        await setTimeout(5000);
+      } catch (error) {
+        if (error.code === 'ECONNABORTED') {
+          throw new Error('API request timed out while checking task status');
+        }
+        throw error;
       }
       
-      throw new Error(`Task processing timed out after ${maxAttempts} attempts (${maxAttempts * 5 / 60} minutes)`);
-    } catch (error) {
-      if (error.code === 'ECONNABORTED') {
-        throw new Error('API request timed out while checking task status');
-      }
-      throw error;
+      await setTimeout(5000);
     }
+    
+    throw new Error(`Task processing timed out after ${maxAttempts * 5 / 60} minutes`);
   }
 
-  // Get asset details
   async getAsset(assetId) {
     try {
       const response = await this.client.get(`${this.apiUrl}/assets/${assetId}`);
@@ -216,7 +238,6 @@ class FadrApi {
     }
   }
 
-  // Get download URL for an asset
   async getDownloadUrl(assetId, quality = 'hq') {
     try {
       const response = await this.client.get(`${this.apiUrl}/assets/download/${assetId}/${quality}`);
@@ -226,7 +247,6 @@ class FadrApi {
     }
   }
 
-  // Download a file
   async downloadFile(url, outputPath) {
     try {
       const response = await axios.get(url, {
@@ -249,13 +269,108 @@ class FadrApi {
     }
   }
 
-  // Process file from start to finish
+  // Process drum stems exactly according to official docs
+  async processDrumStems(drumAssetId, outputDir, fileExt, baseName, progressCallback) {
+
+    // Create drum sub-directory
+    const drumStemsDir = path.join(outputDir, 'drum-components');
+    this.ensureDirectory(drumStemsDir);
+    progressCallback('Starting drum stem separation...', 85);
+    
+    try {
+      // Create drum-specific stem task
+      const task = await this.createDrumStemTask(drumAssetId);
+      
+      // Poll for completion
+      const completedTask = await this.pollTaskStatus(
+        task._id,
+        (attempt, maxAttempts) => {
+          progressCallback(`Waiting for drum stems (attempt ${attempt}/${maxAttempts})...`, 85);
+        },
+        30 // Fewer attempts for drum stems
+      );
+      
+      // Process each drum component
+      const drumResults = [];
+      for (const stemId of completedTask.asset.stems) {
+        const stemAsset = await this.getAsset(stemId);
+        const stemType = stemAsset.metaData.stemType;
+        progressCallback(`Downloading ${stemType} drum component...`, 90);
+        
+        // Get download URL
+        const downloadUrl = await this.getDownloadUrl(stemAsset._id);
+        
+        // Download the stem
+        const outputPath = path.join(drumStemsDir, `${baseName}_${stemType}.${fileExt}`);
+        await this.downloadFile(downloadUrl, outputPath);
+        drumResults.push({
+          type: `drum/${stemType}`,
+          path: outputPath,
+          metadata: stemAsset.metaData
+        });
+      }
+      
+      return drumResults;
+    } catch (error) {
+      progressCallback(`Warning: Drum stem processing failed: ${error.message}`, 85);
+      throw error; // Re-throw to be handled by caller
+    }
+  }
+
+
+  // Process instrumental / other stems
+  async processOtherStems(otherAssetId, outputDir, fileExt, baseName, progressCallback) {
+
+    // Create other sub-directory
+    const otherStemsDir = path.join(outputDir, 'other-components');
+    this.ensureDirectory(otherStemsDir);
+    progressCallback('Starting other stem separation...', 85);
+    
+    try {
+      // Create drum-specific stem task
+      const task = await this.createOtherStemTask(otherAssetId);
+      
+      // Poll for completion
+      const completedTask = await this.pollTaskStatus(
+        task._id,
+        (attempt, maxAttempts) => {
+          progressCallback(`Waiting for other stems (attempt ${attempt}/${maxAttempts})...`, 85);
+        },
+        30 
+      );
+      
+      // Process each Other component
+      const otherResults = [];
+      for (const stemId of completedTask.asset.stems) {
+        const stemAsset = await this.getAsset(stemId);
+        const stemType = stemAsset.metaData.stemType;
+        progressCallback(`Downloading ${stemType} other component...`, 90);
+        
+        // Get download URL
+        const downloadUrl = await this.getDownloadUrl(stemAsset._id);
+        
+        // Download the stem
+        const outputPath = path.join(otherStemsDir, `${baseName}_${stemType}.${fileExt}`);
+        await this.downloadFile(downloadUrl, outputPath);
+        otherResults.push({
+          type: `other/${stemType}`,
+          path: outputPath,
+          metadata: stemAsset.metaData
+        });
+      }
+      
+      return drumResults;
+    } catch (error) {
+      progressCallback(`Warning: Other stem processing failed: ${error.message}`, 85);
+      throw error; // Re-throw to be handled by caller
+    }
+  }
+
+  // Main processing method
   async processFile(inputPath, outputDir, progressCallback) {
     try {
-      // Initial progress
       progressCallback('Validating input and output...', 0);
       
-      // Validate input and output
       this.validateInputFile(inputPath);
       this.validateOutputDirectory(outputDir);
       
@@ -266,10 +381,7 @@ class FadrApi {
       const nameWithPrefix = `[Processed] - ${baseName}`;
       const stemOutputDir = path.join(outputDir, nameWithPrefix);
       
-      // Create output directory
-      if (!fs.existsSync(stemOutputDir)) {
-        fs.mkdirSync(stemOutputDir, { recursive: true });
-      }
+      this.ensureDirectory(stemOutputDir);
       
       // Step 1: Get upload URL
       progressCallback('Getting upload URL...', 5);
@@ -277,20 +389,22 @@ class FadrApi {
       
       // Step 2: Upload file
       progressCallback('Uploading file...', 10);
-      await this.uploadFile(
-        uploadUrl, 
-        inputPath, 
-        `audio/${fileExt}`
-      );
+      await this.uploadFile(uploadUrl, inputPath, `audio/${fileExt}`);
       
       // Step 3: Create asset
       progressCallback('Creating asset...', 20);
-      const asset = await this.createAsset(
-        fileName,
-        fileExt,
-        s3Path,
-        `${fileName}-stems`
+      const asset = await this.createAsset(fileName, fileExt, s3Path, `${fileName}-stems`);
+      
+      // Save initial metadata
+      progressCallback('Saving initial metadata...', 22);
+      const metadataFilePath = await this.saveMetadataToFile(
+        asset, 
+        stemOutputDir,
+        'initial_metadata.json'
       );
+      
+      progressCallback(`Metadata saved to: ${metadataFilePath}`, 24);
+      progressCallback(`Use asset ID: ${asset._id} for recovery if needed`, 25);
       
       // Step 4: Start stem task
       progressCallback('Starting stem extraction...', 25);
@@ -306,13 +420,16 @@ class FadrApi {
         }
       );
       
-      // Step 6: Get all stems
+      // Step 6: Get updated asset info
       progressCallback('Retrieving stem information...', 70);
+      const finalAsset = await this.getAsset(asset._id);
       
+      // Process stems
       const stemResults = [];
-      const midiResults = [];
+      let drumAssetId = null;
+      let otherAssetId = null;
       
-      // Process each stem
+      // Download all main stems first
       for (const stemId of completedTask.asset.stems) {
         const stemAsset = await this.getAsset(stemId);
         const stemType = stemAsset.metaData.stemType;
@@ -331,238 +448,61 @@ class FadrApi {
           path: outputPath,
           metadata: stemAsset.metaData
         });
-
-        // Process drum stems separately
+        
+        // Remember the drum asset ID if found
         if (stemType === 'drums') {
-          try {
-            await this._processDrumStems(stemAsset._id, stemOutputDir, fileExt, progressCallback);
-          } catch (error) {
-            // Log but continue if drum processing fails
-            console.error(`Error processing drum stems: ${error.message}`);
-            progressCallback(`Warning: Drum stem processing failed: ${error.message}`, 85);
-          }
+          drumAssetId = stemAsset._id;
         }
-        
-        // MIDI DOWNLOAD FIX: Process MIDI files from the parent asset (not just stems)
-        progressCallback('Processing MIDI files...', 85);
-            
-        // Get the latest asset data to ensure we have all MIDI files
-        const updatedAsset = await this.getAsset(asset._id);
-
-        if (updatedAsset.midi && updatedAsset.midi.length > 0) {
-          progressCallback(`Found ${updatedAsset.midi.length} MIDI files to download`, 86);
+        if (["other", "others"].includes(stemType.toLowerCase())) {
+          otherAssetId = stemAsset._id;
+        }
+      }
+      
+      // Process drum stems if available
+      if (drumAssetId) {
+        try {
+          const drumResults = await this.processDrumStems(
+            drumAssetId,
+            stemOutputDir,
+            fileExt,
+            baseName,
+            progressCallback
+          );
           
-          for (const midiId of updatedAsset.midi) {
-            try {
-              const midiAsset = await this.getAsset(midiId);
-              
-              // Determine MIDI type - try to get from metadata or use a default
-              let midiType = 'unknown';
-              if (midiAsset.metaData && midiAsset.metaData.midiType) {
-                midiType = midiAsset.metaData.midiType;
-              } else if (midiAsset.metaData && midiAsset.metaData.stemType) {
-                midiType = midiAsset.metaData.stemType;
-              }
-              
-              progressCallback(`Downloading ${midiType} MIDI...`, 87);
-              
-              // Get download URL
-              const midiUrl = await this.getDownloadUrl(midiAsset._id);
-              
-              // Download the MIDI
-              const midiPath = path.join(stemOutputDir, `${midiType}.mid`);
-              await this.downloadFile(midiUrl, midiPath);
-              
-              midiResults.push({
-                type: midiType,
-                path: midiPath,
-                metadata: midiAsset.metaData
-              });
-              
-              progressCallback(`MIDI ${midiType} downloaded successfully`, 88);
-            } catch (error) {
-              console.error(`Error downloading MIDI ${midiId}: ${error.message}`);
-              progressCallback(`Warning: MIDI download failed: ${error.message}`, 88);
-            }
-          }
-        } else {
-          progressCallback('No MIDI files found in asset', 87);
+          // Add drum results to our list
+          stemResults.push(...drumResults);
+        } catch (error) {
+          console.error(`Error processing drum stems: ${error.message}`);
+        }
+      }
+
+      // Process other stems if available
+      if (otherAssetId) {
+        try {
+          const otherResults = await this.processOtherStems(
+            otherAssetId,
+            stemOutputDir,
+            fileExt,
+            baseName,
+            progressCallback
+          );
+          
+          // Add other results to our list
+          stemResults.push(...otherResults);
+        } catch (error) {
+          console.error(`Error processing other stems: ${error.message}`);
         }
       }
       
-      // Get final metadata
-      progressCallback('Retrieving final metadata...', 95);
-      const finalAsset = await this.getAsset(asset._id);
-      const metadataFilePath = await this.saveMetadataToFile(
-        finalAsset, 
-        stemOutputDir
-      );
+      // Process MIDI files
+      progressCallback('Processing MIDI files...', 85);
       
-      // Complete
-      progressCallback('Processing complete!', 100);
-      
-      return {
-        success: true,
-        metadata: finalAsset,
-        metadataFile: metadataFilePath,
-        stems: stemResults,
-        midi: midiResults,
-        outputDirectory: stemOutputDir
-      };
-      
-    } catch (error) {
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  // Process drum stems (internal method)
-  async _processDrumStems(drumsAssetId, outputDir, fileExt, progressCallback) {
-    // Create drum sub-directory
-    const drumStemsDir = path.join(outputDir, 'drum-components');
-    if (!fs.existsSync(drumStemsDir)) {
-      fs.mkdirSync(drumStemsDir, { recursive: true });
-    }
-    
-    // Start drum stem task
-    progressCallback('Starting drum stem separation...', 85);
-    const task = await this.createDrumStemTask(drumsAssetId);
-    
-    // Poll for completion
-    const completedTask = await this.pollTaskStatus(
-      task._id,
-      (attempt, maxAttempts) => {
-        progressCallback(`Waiting for drum stems (attempt ${attempt}/${maxAttempts})...`, 85);
-      },
-      30 // Fewer attempts for drum stems
-    );
-    
-    // Process each drum stem
-    const drumResults = [];
-    
-    for (const stemId of completedTask.asset.stems) {
-      const stemAsset = await this.getAsset(stemId);
-      const stemType = stemAsset.metaData.stemType;
-      
-      progressCallback(`Downloading ${stemType} drum component...`, 90);
-      
-      // Get download URL
-      const downloadUrl = await this.getDownloadUrl(stemAsset._id);
-      
-      // Download the stem
-      const outputPath = path.join(drumStemsDir, `${drumsAssetId}_${stemType}.${fileExt}`);
-      await this.downloadFile(downloadUrl, outputPath);
-      
-      drumResults.push({
-        type: `drum/${stemType}`,
-        path: outputPath,
-        metadata: stemAsset.metaData
-      });
-    }
-    
-    return drumResults;
-  }
-
-  // Helper to handle API errors consistently
-  _handleApiError(error, defaultMessage) {
-    if (error.response) {
-      // The request was made and the server responded with a status code
-      // that falls out of the range of 2xx
-      const data = error.response.data;
-      const message = data.message || data.error || JSON.stringify(data);
-      throw new Error(`${defaultMessage}: ${message} (Status ${error.response.status})`);
-    } else if (error.request) {
-      // The request was made but no response was received
-      throw new Error(`${defaultMessage}: No response received`);
-    } else {
-      // Something happened in setting up the request that triggered an Error
-      throw new Error(`${defaultMessage}: ${error.message}`);
-    }
-  }
-
-  // Download recovery files from an asset ID
-  // Get asset ID from metadata.json returned from processFile
-  async downloadFilesFromAssetId(assetId, outputDir, progressCallback) {
-    try {
-      progressCallback('Starting recovery process...', 0);
-      
-      // Create output directory if it doesn't exist
-      if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true });
-      }
-      
-      // Get asset details
-      progressCallback('Retrieving asset information...', 10);
-      const asset = await this.getAsset(assetId);
-      
-      // Save metadata
-      progressCallback('Saving metadata...', 20);
-      const metadataFilePath = await this.saveMetadataToFile(asset, outputDir);
-      
-      const results = {
-        metadata: asset,
-        metadataFile: metadataFilePath,
-        stems: [],
-        midi: [],
-        outputDirectory: outputDir
-      };
-      
-      // Check for stems
-      if (asset.stems && asset.stems.length > 0) {
-        progressCallback(`Found ${asset.stems.length} stems to download`, 30);
+      const midiResults = [];
+      if (finalAsset.midi && finalAsset.midi.length > 0) {
+        progressCallback(`Found ${finalAsset.midi.length} MIDI files to download`, 86);
         
-        // Get file extension from asset (default to mp3 if not found)
-        const fileExt = 'mp3';
-
-        // Ensure metadata and name exist
-        const baseName = asset.metaData?.name 
-        ? path.parse(asset.metaData.name).name 
-        : `${assetId}`;
-        
-        // Process each stem
-        let stemCount = 0;
-        for (const stemId of asset.stems) {
+        for (const midiId of finalAsset.midi) {
           try {
-            stemCount++;
-            const progress = 30 + (stemCount / asset.stems.length) * 30;
-            
-            const stemAsset = await this.getAsset(stemId);
-            const stemType = stemAsset.metaData?.stemType || `stem${stemCount}`;
-            
-            progressCallback(`Downloading ${stemType} stem...`, progress);
-            
-            // Get download URL
-            const downloadUrl = await this.getDownloadUrl(stemId);
-            
-            // Download the stem
-            const outputPath = path.join(outputDir, `${baseName}_${stemType}.${fileExt}`);
-            await this.downloadFile(downloadUrl, outputPath);
-            
-            results.stems.push({
-              type: stemType,
-              path: outputPath,
-              metadata: stemAsset.metaData
-            });
-          } catch (error) {
-            console.error(`Error downloading stem ${stemId}: ${error.message}`);
-            progressCallback(`Warning: Failed to download a stem: ${error.message}`, 60);
-          }
-        }
-      }
-      
-      // Download MIDIs
-      if (asset.midi && asset.midi.length > 0) {
-        progressCallback(`Found ${asset.midi.length} MIDI files to download`, 70);
-        
-        // Process each MIDI
-        let midiCount = 0;
-        for (const midiId of asset.midi) {
-          try {
-            midiCount++;
-            const progress = 70 + (midiCount / asset.midi.length) * 25;
-            
             const midiAsset = await this.getAsset(midiId);
             
             // Determine MIDI type
@@ -573,25 +513,112 @@ class FadrApi {
               midiType = midiAsset.metaData.stemType;
             }
             
-            progressCallback(`Downloading ${midiType} MIDI...`, progress);
+            progressCallback(`Downloading ${midiType} MIDI...`, 87);
             
             // Get download URL
-            const midiUrl = await this.getDownloadUrl(midiId);
+            const midiUrl = await this.getDownloadUrl(midiAsset._id);
             
             // Download the MIDI
-            const midiPath = path.join(outputDir, `${midiType}.mid`);
+            const midiPath = path.join(stemOutputDir, `${midiType}.mid`);
             await this.downloadFile(midiUrl, midiPath);
             
-            results.midi.push({
+            midiResults.push({
               type: midiType,
               path: midiPath,
               metadata: midiAsset.metaData
             });
+            
+            progressCallback(`MIDI ${midiType} downloaded successfully`, 88);
           } catch (error) {
             console.error(`Error downloading MIDI ${midiId}: ${error.message}`);
-            progressCallback(`Warning: Failed to download a MIDI file: ${error.message}`, 95);
+            progressCallback(`Warning: MIDI download failed: ${error.message}`, 88);
           }
         }
+      } else {
+        progressCallback('No MIDI files found in asset', 87);
+      }
+      
+      // Update metadata at the end
+      progressCallback('Updating metadata file...', 98);
+      const finalMetadataFilePath = await this.saveMetadataToFile(
+        finalAsset, 
+        stemOutputDir,
+        'metadata.json'
+      );
+      
+      // Complete
+      progressCallback('Processing complete!', 100);
+      
+      return {
+        success: true,
+        metadata: finalAsset,
+        metadataFile: finalMetadataFilePath,
+        initialMetadataFile: metadataFilePath,
+        stems: stemResults,
+        midi: midiResults,
+        outputDirectory: stemOutputDir
+      };
+    } catch (error) {
+      console.error('Processing failed:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  // Recovery method
+  // Cannot retrieve stems derived from drum / other. Totally unusable.  
+
+  async downloadFilesFromAssetId(assetId, outputDir, progressCallback) {
+    try {
+      progressCallback('Starting recovery process...', 0);
+      
+      this.ensureDirectory(outputDir);
+      
+      // Get asset details
+      progressCallback('Retrieving asset information...', 10);
+      const asset = await this.getAsset(assetId);
+      
+      // Save metadata
+      progressCallback('Saving metadata...', 20);
+      const metadataFilePath = await this.saveMetadataToFile(asset, outputDir);
+      
+      const baseName = asset.metaData?.name 
+        ? path.parse(asset.metaData.name).name 
+        : `${assetId}`;
+      
+      // Default file extension if not found
+      const fileExt = 'mp3';
+      
+      // Download stems
+      const stemResults = [];
+      if (asset.stems && asset.stems.length > 0) {
+        progressCallback(`Found ${asset.stems.length} stems to download`, 30);
+        
+        stemResults.push(...await this.downloadFile(
+          asset.stems,
+          outputDir,
+          fileExt,
+          baseName,
+          'stem',
+          (message) => progressCallback(message, 50)
+        ));
+      }
+      
+      // Download MIDIs
+      const midiResults = [];
+      if (asset.midi && asset.midi.length > 0) {
+        progressCallback(`Found ${asset.midi.length} MIDI files to download`, 70);
+        
+        midiResults.push(...await this.downloadFile(
+          asset.midi,
+          outputDir,
+          'mid',
+          baseName,
+          'midi',
+          (message) => progressCallback(message, 85)
+        ));
       } else {
         progressCallback('No MIDI files found in asset', 85);
       }
@@ -600,7 +627,11 @@ class FadrApi {
       
       return {
         success: true,
-        ...results
+        metadata: asset,
+        metadataFile: metadataFilePath,
+        stems: stemResults,
+        midi: midiResults,
+        outputDirectory: outputDir
       };
     } catch (error) {
       console.error('Recovery failed:', error);
@@ -610,7 +641,6 @@ class FadrApi {
       };
     }
   }
-
 }
 
 module.exports = FadrApi;
